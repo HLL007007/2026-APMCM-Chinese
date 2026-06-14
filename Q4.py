@@ -8,17 +8,13 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# ==========================================
 # 0. 环境与画图设置
-# ==========================================
-plt.rcParams['font.sans-serif'] = ['SimHei'] # Windows系统防乱码，Mac请换用 'Arial Unicode MS'
+plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-# ==========================================
 # 1. 数据读取与切分标注
-# ==========================================
 file_path = "Combined_Water_Quality_2025_2026_Q4.xlsx" 
-print(f"正在读取全量历史数据: {file_path} ...")
+print(f"正在读取数据: {file_path} ...")
 try:
     df_all = pd.read_excel(file_path)
 except:
@@ -31,9 +27,7 @@ target_col = 'NTU'
 df_all[target_col] = pd.to_numeric(df_all[target_col], errors='coerce')
 df_all = df_all.dropna(subset=['DATE', target_col])
 
-# ==========================================
-# 2. 特征工程 (红线内依然要计算异常时长)
-# ==========================================
+# 2. 特征工程
 print("\n正在执行全域特征提取...")
 NATIONAL_STANDARD = 1.0
 GLOBAL_MEAN_NTU = df_all[target_col].mean()
@@ -54,7 +48,7 @@ for date, group in df_all.groupby(df_all['DATE'].dt.date):
     max_ntu = np.max(ntu_values)
     mean_ntu = np.mean(ntu_values)
     
-    # 计算红线内的“相对高位波动时长” (大于历史均值即视为处于高位波动状态)
+    # 计算红线内的“相对高位波动时长” 
     fluctuation_mask = ntu_values > GLOBAL_MEAN_NTU
     d_total = np.sum(fluctuation_mask) * 2  
     
@@ -75,26 +69,22 @@ for date, group in df_all.groupby(df_all['DATE'].dt.date):
 
 df_daily = pd.DataFrame(daily_records)
 
-# ==========================================
-# 3. ★ 顺次降档逻辑：拦截超标日，合规日备选 ★
-# ==========================================
+# 3. 拦截超标日，合规日备选
 violation_mask = df_daily['Max_NTU'] > NATIONAL_STANDARD
 df_violation = df_daily[violation_mask].copy()
 
-# ★ 降级 1：超过 1.0 的违规，降级定为“高风险”
+#  超过 1.0 的违规，降级定为“高风险”
 if len(df_violation) > 0:
     df_violation['Status'] = '高风险 (>1.0)'
     df_violation['Risk_Level'] = 4
-    df_violation['Risk_Score'] = 1.1 # 固定一个高分用于散点图画在最上面
+    df_violation['Risk_Score'] = 1.1
 
 # 提取所有合规日 (<= 1.0)，进入内卷池
 df_compliant = df_daily[~violation_mask].copy()
 print(f"筛选完毕：高风险(突破1.0) {len(df_violation)} 天，红线内参与评估的基数 {len(df_compliant)} 天。")
 
 
-# ==========================================
 # 4. 基于红线内的 AHP-EWM 赋权
-# ==========================================
 features = ['Max_NTU', 'Mean_NTU', 'D_total', 'D_cont']
 feature_names = ['极大值\n(Max)', '日均浊度\n(Mean)', '总波动时长\n(D_total)', '连续波动\n(D_cont)']
 
@@ -127,10 +117,8 @@ w_ahp = w_ahp / np.sum(w_ahp)
 w_combined = (w_ewm * w_ahp) / np.sum(w_ewm * w_ahp)
 
 
-# ==========================================
-# 5. K-Means 聚类 (★顺次降档★)
-# ==========================================
-print("正在执行 K-Means 聚类与评级顺次降档...")
+# 5. K-Means 聚类
+print("正在执行 K-Means 聚类与评级...")
 X_compliant_norm = scaler.transform(df_compliant[features].values)
 df_compliant['Risk_Score'] = np.dot(X_compliant_norm, w_combined)
 
@@ -144,7 +132,7 @@ sorted_idx = np.argsort(centers)
 mapping = {sorted_idx[0]: 1, sorted_idx[1]: 2, sorted_idx[2]: 3}
 df_compliant['Risk_Level'] = df_compliant['Cluster'].map(mapping)
 
-# ★ 降级 2-4：聚类 1(最低)为安全，聚类 2 为低风险，聚类 3(最高)为中风险
+# 聚类 1(最低)为安全，聚类 2 为低风险，聚类 3(最高)为中风险
 label_map = {1: '安全 (Safe)', 2: '低风险 (Low)', 3: '中风险 (Medium)'}
 df_compliant['Status'] = df_compliant['Risk_Level'].map(label_map)
 
@@ -152,13 +140,11 @@ df_compliant['Status'] = df_compliant['Risk_Level'].map(label_map)
 df_final = pd.concat([df_compliant, df_violation]).sort_values('Date').reset_index(drop=True)
 
 
-# ==========================================
-# 6. ★高能预警：7张极致学术大图渲染★
-# ==========================================
-print("\n正在渲染 AHP-EWM 过程与聚类评估 7 张学术大图...")
+# 6. 可视化
+print("\n正在渲染 AHP-EWM 过程与聚类评估的可视化图片...")
 color_dict = {'安全 (Safe)': '#2ca02c', '低风险 (Low)': '#f1c40f', '中风险 (Medium)': '#e67e22', '高风险 (>1.0)': '#d62728'}
 
-# 【图 1】AHP 层次分析法专家判断矩阵热力图 (展示过程)
+# 【图 1】AHP 层次分析法专家判断矩阵热力图
 plt.figure(figsize=(6, 5))
 sns.heatmap(ahp_matrix, annot=True, fmt=".2f", cmap="YlOrRd", 
             xticklabels=['Max', 'Mean', 'D_total', 'D_cont'], 
@@ -167,7 +153,7 @@ sns.heatmap(ahp_matrix, annot=True, fmt=".2f", cmap="YlOrRd",
 plt.title("AHP 主观判断矩阵 (一致性检验 CR<0.1)", fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
 
-# 【图 2】EWM 熵权法特征离散度双轴图 (展示过程)
+# 【图 2】EWM 熵权法特征离散度双轴图 
 fig2, ax2_1 = plt.subplots(figsize=(8, 5))
 ax2_2 = ax2_1.twinx()
 x_pos = np.arange(len(feature_names))
@@ -196,7 +182,7 @@ ax3.set_title("AHP-EWM 主客观联合赋权机制结果对比", fontsize=15, fo
 ax3.legend()
 plt.tight_layout()
 
-# 【图 4】降档后各特征的箱线图 (解构聚类的内在物理意义)
+# 【图 4】降档后各特征的箱线图
 if len(df_compliant) > 0:
     fig4, axes4 = plt.subplots(2, 2, figsize=(12, 9))
     fig4.suptitle("红线内各风险层级的统计分布画像 (Boxplot)", fontsize=16, fontweight='bold', y=0.95)
@@ -211,7 +197,7 @@ if len(df_compliant) > 0:
         axes4[i].grid(axis='y', linestyle='--', alpha=0.5)
     plt.tight_layout()
 
-# 【图 5】2026年1、2、3月 水质评级占比三饼图 (绝美层次感)
+# 【图 5】2026年1、2、3月 水质评级占比三饼图
 df_q1 = df_final[df_final['Is_Eval'] == True].copy()
 fig5, axes_pie = plt.subplots(1, 3, figsize=(18, 6))
 for i, m in enumerate([1, 2, 3]):
@@ -223,7 +209,7 @@ for i, m in enumerate([1, 2, 3]):
 fig5.suptitle("2026年第一季度出厂水质阶梯式风险分布 (降档调整后)", fontsize=18, fontweight='bold', y=0.9)
 plt.tight_layout()
 
-# 【图 6】综合风险得分时序散点图 (展示聚类边界)
+# 【图 6】综合风险得分时序散点图 
 fig6, ax6 = plt.subplots(figsize=(14, 6))
 df_q1['Date'] = pd.to_datetime(df_q1['Date'])
 
@@ -246,7 +232,7 @@ plt.xticks(rotation=45)
 plt.grid(True, linestyle='--', alpha=0.5)
 plt.tight_layout()
 
-# 【图 7】KMeans 降档后的内部特征雷达图
+# 【图 7】KMeans 的内部特征雷达图
 radar_data = pd.DataFrame(X_train_norm, columns=features)
 radar_data['Risk_Level'] = df_compliant[df_compliant['Is_Train'] == True]['Risk_Level'].values
 radar_avg = radar_data.groupby('Risk_Level').mean()
@@ -269,10 +255,8 @@ plt.tight_layout()
 
 plt.show()
 
-# ==========================================
-# 7. 导出 3月份 最终顺次降档评估报表 Excel
-# ==========================================
-print("\n正在生成 3 月份最终国标降档审计报表并导出 Excel...")
+# 7. 导出 3月份 评估报表 Excel
+print("\n正在生成 3 月份国标审计报表并导出 Excel...")
 
 march_df = df_final[(df_final['Year'] == 2026) & (df_final['Month'] == 3)].copy()
 march_df['Date'] = pd.to_datetime(march_df['Date']).dt.strftime('%Y-%m-%d')
@@ -294,5 +278,3 @@ output_report['相对风险聚类得分'] = output_report['相对风险聚类得
 
 excel_filename = 'Question4_March_Final_Adjusted_Evaluation.xlsx'
 output_report.to_excel(excel_filename, index=False)
-
-print(f"\n✅ 绝杀完毕！降档命名 + 海量过程图的高分报表已生成: {excel_filename}")

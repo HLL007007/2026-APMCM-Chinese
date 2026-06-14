@@ -11,15 +11,11 @@ import warnings
 warnings.filterwarnings('ignore')
 tf.get_logger().setLevel('ERROR')
 
-# ==========================================
 # 0. 环境与画图设置
-# ==========================================
 plt.rcParams['font.sans-serif'] = ['SimHei'] 
 plt.rcParams['axes.unicode_minus'] = False
 
-# ==========================================
-# 1. 读取数据与严谨的因果清洗 (杜绝数据穿越)
-# ==========================================
+# 1. 读取数据与严谨的因果清洗
 file_path = "Combined_Water_Quality_2025_2026_Q3.xlsx" 
 print(f"正在读取并清洗数据: {file_path} ...")
 df = pd.read_excel(file_path)
@@ -30,26 +26,19 @@ df['DATE_STR'] = df['DATE'].dt.strftime('%Y-%m-%d')
 df['TIME_STR'] = df['TIME'].astype(str).str.replace(':', '').str.replace('.0', '', regex=False).str.strip().str.zfill(4)
 
 target_col = 'NTU' 
-# 区分状态变量和控制变量
 state_features = ['FILT. NTU', 'R/W FLOW', 'C/W WELL LEVEL', 'T/W FLOW']
-control_features = ['F/RIDE', 'T/W PUMP DUTY']  # 控制变量需要滞后处理
+control_features = ['F/RIDE', 'T/W PUMP DUTY'] 
 
-# 强制转换并使用前向填充，杜绝未来数据泄露
 for col in state_features + control_features + [target_col]:
     df[col] = pd.to_numeric(df[col], errors='coerce')
-    df[col] = df[col].ffill().bfill() # 只用历史数据填充
+    df[col] = df[col].ffill().bfill()
 
-# 【关键修复】引入时滞 (Time Delay)
-# 题目提示投药对滤后水有2-6小时滞后。每步2小时，因此将投药量滞后2步(4小时)
 df['F/RIDE_Lag2'] = df['F/RIDE'].shift(2).ffill().bfill()
 features = state_features + ['F/RIDE_Lag2', 'T/W PUMP DUTY']
 
-# ==========================================
 # 2. 物理先验特征 (水力停留与质量守恒预期)
-# ==========================================
 print("正在计算物理守恒边界...")
 epsilon = 1e-5
-# 清水池水力停留时间 HRT
 df['HRT'] = df['C/W WELL LEVEL'] / (df['T/W FLOW'] + epsilon)
 
 # 物理预期的浊度变化量 (基于质量守恒: 进水负荷 - 出水负荷)
@@ -58,9 +47,7 @@ df['Phys_Delta_NTU'] = (df['R/W FLOW'] * df['FILT. NTU'] - df['T/W FLOW'] * df[t
 
 all_features = features + ['HRT', 'Phys_Delta_NTU']
 
-# ==========================================
 # 3. 构建 Seq2Seq 张量
-# ==========================================
 print("构建时空张量与特征缩放...")
 scaler_X = StandardScaler()
 scaler_y = StandardScaler()
@@ -68,8 +55,8 @@ scaler_y = StandardScaler()
 df_scaled_features = scaler_X.fit_transform(df[all_features])
 data_y_scaled = scaler_y.fit_transform(df[[target_col]])
 
-lookback = 12 # 过去 24 小时
-horizon = 7   # 预测未来 7 步 (7点至19点)
+lookback = 12
+horizon = 7  
 
 X_seq, Y_seq = [], []
 for i in range(lookback, len(df) - horizon):
@@ -83,9 +70,7 @@ split_idx = int(len(X_seq) * 0.8)
 X_train, y_train = X_seq[:split_idx], Y_seq[:split_idx]
 X_test, y_test = X_seq[split_idx:], Y_seq[split_idx:]
 
-# ==========================================
 # 4. 训练真正的 PINN-LSTM 
-# ==========================================
 print("\n构建并训练带有物理惩罚项的 PINN-LSTM...")
 
 # 提取特征索引以便在自定义 Loss 中使用
@@ -117,10 +102,8 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss=pinn
 early_stop = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
 model.fit(X_train, y_train, epochs=80, batch_size=32, validation_split=0.1, callbacks=[early_stop], verbose=0)
 
-# ==========================================
 # 5. 指定日期表格导出
-# ==========================================
-print("\n" + "="*50)
+print("\n" )
 print("开始执行指定日期预测...")
 
 target_dates = ['2026-02-01', '2026-02-10', '2026-02-20']
@@ -144,14 +127,12 @@ for t_date in target_dates:
 ans_df = pd.DataFrame(results)
 excel_filename = 'Question3_NTU_Predictions_Final.xlsx'
 ans_df.to_excel(excel_filename, index=False)
-print(f"✅ 预测结果已导出至: {excel_filename}")
+print(f"预测结果已导出至: {excel_filename}")
 print(ans_df.to_string())
 
-# ==========================================
-# 6. 严谨的敏感性分析 (符合控制逻辑)
-# ==========================================
+# 6. 严谨的敏感性分析
 print("\n正在生成敏感性分析图表...")
-sample_input = X_test[100:101].copy()  # 抽取一个平稳的测试样本
+sample_input = X_test[100:101].copy() 
 
 # 基准预测
 baseline_pred = scaler_y.inverse_transform(model.predict(sample_input, verbose=0)).flatten()
