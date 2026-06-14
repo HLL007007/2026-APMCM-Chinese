@@ -16,10 +16,9 @@ import warnings
 warnings.filterwarnings('ignore')
 tf.get_logger().setLevel('ERROR')
 
-# ==========================================
+
 # 0. 自定义函数与环境设置
-# ==========================================
-plt.rcParams['font.sans-serif'] = ['SimHei'] # Windows系统防乱码，Mac请换用 'Arial Unicode MS'
+plt.rcParams['font.sans-serif'] = ['SimHei'] 
 plt.rcParams['axes.unicode_minus'] = False
 
 # 定义 Hampel 滤波器函数 (基于 Median Absolute Deviation)
@@ -32,12 +31,9 @@ def hampel_filter(series, window_size=5, n_sigmas=3):
     series_cleaned[outlier_mask] = np.nan
     return series_cleaned
 
-# ==========================================
 # 1. 数据读取与日期解析清洗
-# ==========================================
 file_path = "Combined_Water_Quality_2025_2026_Q2.xlsx" 
 print(f"正在读取数据: {file_path} ...")
-# 替换为你的真实路径和读取方式
 df = pd.read_excel(file_path)
 df.columns = [str(col).strip() for col in df.columns]
 
@@ -64,9 +60,7 @@ for col in features + [target_col]:
 df[features + [target_col]] = df[features + [target_col]].interpolate(method='linear').ffill().bfill()
 
 
-# ==========================================
 # 2. 互相关函数 (CCF) 计算寻找物理时滞
-# ==========================================
 print("\n正在计算 CCF 寻找最佳时滞，以为 TCN 确定感受野窗口大小...")
 max_lag = 12 
 lag_dict = {}
@@ -91,9 +85,7 @@ for i, feature in enumerate(features):
 plt.tight_layout()
 
 
-# ==========================================
 # 3. 构造深度学习 TCN-Attention 专用的 3D 张量数据
-# ==========================================
 print("\n正在构建 3D 时间窗口序列数据...")
 
 scaler_X = StandardScaler()
@@ -114,9 +106,7 @@ X_seq = np.array(X_seq)
 Y_seq = np.array(Y_seq)
 
 
-# ==========================================
-# 4. ★按 7:3 随机划分训练集与测试集 (带时间序列排序保护)★
-# ==========================================
+# 4. 按 7:3 随机划分训练集与测试集 (带时间序列排序保护)
 print("\n[模型验证策略] 正在按 70% 训练集, 30% 测试集进行随机切分...")
 
 # 提取索引序列进行随机切分，保留索引以便后续画折线图时排序
@@ -124,7 +114,7 @@ indices = np.arange(len(X_seq))
 
 idx_train, idx_test = train_test_split(indices, test_size=0.3, random_state=42)
 
-# ★核心保护机制★：对测试集的索引进行升序排序，保证后续画折线图时是连续的波形
+# 对测试集的索引进行升序排序，保证后续画折线图时是连续的波形
 idx_test_sorted = np.sort(idx_test)
 
 X_train, y_train = X_seq[idx_train], Y_seq[idx_train]
@@ -134,15 +124,14 @@ print(f"-> 训练集样本数: {len(X_train)} 条")
 print(f"-> 测试集样本数: {len(X_test)} 条 (已恢复时间顺序)")
 
 
-# ==========================================
-# 5. ★构建核武器级架构: TCN-Attention 模型★
-# ==========================================
+
+# 5. 构建架构: TCN-Attention 模型
 print("\n正在构建高级 TCN-Attention 深度网络 (请耐心等待数十秒)...")
 
 # 使用 Functional API 构建网络
 inputs = Input(shape=(X_train.shape[1], X_train.shape[2]))
 
-# 第一阶段：TCN 的因果膨胀卷积 (捕获局部时滞与突变)
+# 第一阶段：TCN 的因果膨胀卷积 
 x = Conv1D(filters=32, kernel_size=3, padding='causal', activation='relu', dilation_rate=1)(inputs)
 x = Conv1D(filters=64, kernel_size=3, padding='causal', activation='relu', dilation_rate=2)(x)
 tcn_out = Conv1D(filters=64, kernel_size=3, padding='causal', activation='relu', dilation_rate=4)(x)
@@ -150,7 +139,7 @@ tcn_out = Conv1D(filters=64, kernel_size=3, padding='causal', activation='relu',
 # 第二阶段：多头自注意力机制 (Multi-Head Self-Attention) (捕获全局周期性依赖)
 attn_out = MultiHeadAttention(num_heads=4, key_dim=64)(tcn_out, tcn_out)
 
-# 加入残差连接与层归一化 (防止梯度消失，加速收敛)
+# 加入残差连接与层归一化 
 x = Add()([tcn_out, attn_out])
 x = LayerNormalization()(x)
 
@@ -170,7 +159,7 @@ model.fit(
     X_train, y_train,
     epochs=100,
     batch_size=32,
-    validation_split=0.1, # 从训练集中划分 10% 供早停验证
+    validation_split=0.1, # 早停验证
     callbacks=[early_stop],
     verbose=0 
 )
@@ -185,27 +174,23 @@ y_test_pred = scaler_y.inverse_transform(y_test_pred_scaled).flatten()
 y_test_real = scaler_y.inverse_transform(y_test.reshape(-1, 1)).flatten()
 
 
-# ==========================================
 # 6. 计算测试集的四大检验参数
-# ==========================================
 r2 = r2_score(y_test_real, y_test_pred)
 rmse = np.sqrt(mean_squared_error(y_test_real, y_test_pred))
 mae = mean_absolute_error(y_test_real, y_test_pred)
 mape = mean_absolute_percentage_error(y_test_real, y_test_pred) * 100
 
-print("\n" + "="*60)
-print("【TCN-Attention 模型】在 30% 测试集上的终极验证精度")
-print("="*60)
+print("\n")
+print("【TCN-Attention 模型】在 30% 测试集上的验证精度")
 print(f"决定系数 (R²) : {r2:.4f}")
 print(f"均方根误差 (RMSE): {rmse:.4f}")
 print(f"平均绝对误差 (MAE) : {mae:.4f}")
 print(f"平均绝对百分比误差 (MAPE): {mape:.2f}%")
 
 
-# ==========================================
-# 7. 终极可视化：生成分离的高清学术图表
-# ==========================================
-print("\n正在渲染所有高清学术图表...")
+
+# 7. 可视化：生成图表
+print("\n正在渲染所有图表...")
 
 # 【生成图 2】：测试集时序动态拟合曲线
 fig2 = plt.figure(figsize=(14, 6))
@@ -218,7 +203,7 @@ plt.legend(fontsize=12, loc='upper left')
 plt.grid(linestyle='--', alpha=0.5)
 plt.tight_layout()
 
-# 【生成图 3】：★训练集与测试集分离的 双散点图★
+# 【生成图 3】：训练集与测试集分离的 双散点图
 fig3, axes = plt.subplots(1, 2, figsize=(16, 7))
 
 # 子图 3-1: 训练集散点图
@@ -239,7 +224,7 @@ ax2 = axes[1]
 ax2.scatter(y_test_real, y_test_pred, color='#2ca02c', alpha=0.6, edgecolor='w', s=50)
 min_test = min(y_test_real.min(), y_test_pred.min())
 max_test = max(y_test_real.max(), y_test_pred.max())
-ax2.plot([min_test, max_test], [min_test, max_test], 'r--', linewidth=2.5, label='完美拟合线 (y=x)')
+ax2.plot([min_test, max_test], [min_test, max_test], 'r--', linewidth=2.5, label='拟合线 (y=x)')
 ax2.set_title(f"【测试集 (30% 样本)】 散点分布 ($R^2$: {r2:.4f})", fontsize=14, fontweight='bold')
 ax2.set_xlabel("真实值 (Actual NTU)", fontsize=12)
 ax2.set_ylabel("注意力模型预测值", fontsize=12)
@@ -248,7 +233,7 @@ ax2.grid(linestyle='--', alpha=0.5)
 
 plt.tight_layout()
 
-# 【生成图 4】：三大检验参数柱状图 (测试集)
+# 【生成图 4】：三大检验参数柱状图 
 fig4 = plt.figure(figsize=(10, 6))
 metrics_names = ['决定系数\n$R^2$', '均方根误差\nRMSE', '平均绝对误差\nMAE']
 metrics_values = [r2, rmse, mae]
@@ -270,5 +255,3 @@ plt.grid(axis='y', linestyle='--', alpha=0.5)
 plt.tight_layout()
 
 plt.show()
-
-print("\n✅ TCN-Attention (7:3 随机划分) 训练验证执行完毕！请查看弹出的 4 个独立窗口。")

@@ -14,31 +14,23 @@ import warnings
 
 warnings.filterwarnings('ignore') 
 
-# ========================================================
 # 0. 环境与画图设置
-# ========================================================
-# 设置中文字体，防止画图时中文乱码 (Mac系统请改为 'Arial Unicode MS')
 plt.rcParams['font.sans-serif'] = ['SimHei'] 
 plt.rcParams['axes.unicode_minus'] = False
 
-# ========================================================
 # 1. 核心预处理与特征工程函数定义 (强力加分项)
-# ========================================================
 def calc_pump_count(x):
     """
-    【特征工程】将离散文本状态转化为物理意义上的“开启台数”
-    例如: '1,2' -> 2; '1+3' -> 2; '1' -> 1; 缺失 -> 0
+    【特征工程】将离散的文本状态转化为开启台数
     """
     if pd.isna(x) or str(x).strip() in ['', '-']:
         return 0
-    # 统一替换非法符号为逗号，并去除空格
     s = str(x).replace('+', ',').replace('&', ',').replace(' ', '')
-    # 按照逗号分割，计算有多少个独立的水泵编号
     return len([p for p in s.split(',') if p])
 
 def robust_clean_data(df):
     """
-    【数据清洗】对工业水质数据进行专业级的异常值截断、去噪平滑与缺失值插补
+    【数据清洗】对工业水质数据进行的异常值截断、去噪平滑与缺失值插补
     """
     df_cleaned = df.copy()
     numeric_cols = df_cleaned.select_dtypes(include=[np.number]).columns
@@ -57,21 +49,17 @@ def robust_clean_data(df):
     return df_cleaned
 
 
-# ========================================================
 # 第一部分：特征重要性分析 (皮尔逊、XGBoost、SHAP)
-# ========================================================
-print("\n" + "="*50)
+print("\n")
 print(" 第一部分：特征重要性与归因分析")
-print("="*50)
 
 file_path = "Combined_Water_Quality_2025_2026_Q1.xlsx"
 print(f"正在读取历史训练数据: {file_path} ...")
 df_raw = pd.read_excel(file_path)
 
-# 清理表头首尾空格
 df_raw.columns = [str(col).strip() for col in df_raw.columns]
 
-# --- 应用特征工程：转化泵机状态 ---
+# 应用特征工程：转化泵机状态
 if 'T/W PUMP DUTY' in df_raw.columns:
     df_raw['T/W PUMP DUTY'] = df_raw['T/W PUMP DUTY'].apply(calc_pump_count)
 if 'R/W PUMP DUTY' in df_raw.columns:
@@ -89,7 +77,7 @@ df_numeric = df_raw.drop(columns=drop_cols, errors='ignore')
 # 强制转换数值型
 df_numeric = df_numeric.apply(pd.to_numeric, errors='coerce')
 
-# 执行专业级的数据清洗 (去噪、截断、插补)
+# 执行数据清洗
 print("\n[数据预处理] 正在执行 缺失值插补、去噪与异常值截断...")
 df_numeric = robust_clean_data(df_numeric)
 
@@ -130,26 +118,22 @@ plt.title(f"{target_col} 的 SHAP 全局归因分析", fontsize=16)
 plt.tight_layout()
 plt.show()
 
-
-# ========================================================
 # 第二部分：三大核心模型预测 (Lasso、GAM、Random Forest)
-# ========================================================
-print("\n" + "="*50)
+print("\n")
 print(" 第二部分：模型建立、对比与未知数据预测")
-print("="*50)
 
 predict_file = "2026-02.xlsx"
 print(f"正在读取待预测集数据: {predict_file} ...")
 df_predict_raw = pd.read_excel(predict_file)
 df_predict_raw.columns = [str(col).strip() for col in df_predict_raw.columns]
 
-# --- 应用特征工程：预测集泵机转化 ---
+# 应用特征工程：预测集泵机转化
 if 'T/W PUMP DUTY' in df_predict_raw.columns:
     df_predict_raw['T/W PUMP DUTY'] = df_predict_raw['T/W PUMP DUTY'].apply(calc_pump_count)
 if 'R/W PUMP DUTY' in df_predict_raw.columns:
     df_predict_raw['R/W PUMP DUTY'] = df_predict_raw['R/W PUMP DUTY'].apply(calc_pump_count)
 
-# 锁定前五大核心特征 (此时 T/W PUMP DUTY 已经是安全的纯数字了)
+# 锁定前五大核心特征
 top5_features = ['FILT. NTU', 'F/RIDE', 'T/W PUMP DUTY' , 'T/W FLOW' , 'R/W FLOW']
 print(f"\n[锁定模型输入特征] {top5_features}")
 
@@ -163,8 +147,6 @@ time_col = time_col[0] if time_col else None
 
 df_predict_numeric = df_predict_raw[top5_features].apply(pd.to_numeric, errors='coerce')
 df_predict_cleaned = robust_clean_data(df_predict_numeric) 
-
-# ★ 终极兜底防线：防止预测集中由于全为空值导致的 NaN 传递
 df_predict_cleaned = df_predict_cleaned.fillna(0)
 
 # 特征缩放与数据集划分
@@ -183,7 +165,7 @@ for col in top5_features:
     base_output_df[col] = df_predict_cleaned[col]
 
 
-# --- 模型 1：Lasso 回归 ---
+# 模型 1：Lasso 回归
 print("\n[1] 正在训练 Lasso 回归模型...")
 lasso = Lasso(alpha=0.001)
 lasso.fit(X_train_scaled, y_train)
@@ -207,7 +189,7 @@ for i, feature in enumerate(top5_features):
 print("-> Lasso 函数关系式:\n", formula_lasso)
 
 
-# --- 模型 2：GAM 广义加性模型 ---
+# 模型 2：GAM 广义加性模型
 print("\n[2] 正在训练 GAM 模型...")
 gam = LinearGAM(s(0) + s(1) + s(2) + s(3) + s(4))
 gam.gridsearch(X_train.values, y_train.values, progress=False)
@@ -243,7 +225,7 @@ plt.tight_layout()
 plt.show()
 
 
-# --- 模型 3：Random Forest 随机森林 ---
+#  模型 3：Random Forest 随机森林
 print("\n[3] 正在训练 Random Forest 模型...")
 rf_model = RandomForestRegressor(n_estimators=100, max_depth=8, random_state=42)
 rf_model.fit(X_train_scaled, y_train)
@@ -260,13 +242,10 @@ df_rf = base_output_df.copy()
 df_rf['RF_Pred_NTU'] = rf_model.predict(X_predict_scaled)
 
 
-# ========================================================
 # 结果汇总与导出
-# ========================================================
 df_eval = pd.DataFrame(eval_metrics)
-print("\n" + "="*50)
+print("\n")
 print(" 模型评价指标对比汇总")
-print("="*50)
 print(df_eval.to_string(index=False))
 
 file_lasso = 'Predict_Result_Lasso_Feb2026.xlsx'
@@ -279,21 +258,20 @@ df_rf.to_excel(file_rf, index=False)
 print(f"\n[导出成功] 三个模型的预测结果已分别保存为:")
 print(f"1. {file_lasso}\n2. {file_gam}\n3. {file_rf}")
 
-# 模型效果对比三联图
 fig, axes = plt.subplots(1, 3, figsize=(18, 6))
 colors = ['#4CB391', '#FF9F43', '#00CFE8']
 
 axes[0].bar(df_eval['Model'], df_eval['R2'], color=colors, edgecolor='black')
-axes[0].set_title("各模型决定系数 ($R^2$) 对比 - 越高越好", fontsize=14)
+axes[0].set_title("各模型决定系数 ($R^2$) 对比", fontsize=14)
 axes[0].set_ylim(0, 1) 
 axes[0].grid(axis='y', linestyle='--', alpha=0.7)
 
 axes[1].bar(df_eval['Model'], df_eval['RMSE'], color=colors, edgecolor='black')
-axes[1].set_title("各模型均方根误差 (RMSE) 对比 - 越低越好", fontsize=14)
+axes[1].set_title("各模型均方根误差 (RMSE) 对比", fontsize=14)
 axes[1].grid(axis='y', linestyle='--', alpha=0.7)
 
 axes[2].bar(df_eval['Model'], df_eval['MAE'], color=colors, edgecolor='black')
-axes[2].set_title("各模型平均绝对误差 (MAE) 对比 - 越低越好", fontsize=14)
+axes[2].set_title("各模型平均绝对误差 (MAE) 对比", fontsize=14)
 axes[2].grid(axis='y', linestyle='--', alpha=0.7)
 
 plt.tight_layout()
